@@ -34,13 +34,14 @@ EXAMPLE_JSON = """{
   "author": "Gani Achmad Jae Lani",
   "degree_type": "Thèse de doctorat",
   "discipline": "Histoire et civilisations",
+  "volume": null,
   "granting_institution": "École des Hautes Études en Sciences Sociales",
   "co_tutelle_institutions": [],
   "doctoral_school": "École doctorale de l'EHESS",
-  "defense_year": 2017,
-  "advisor": "Gérard Jorland",
-  "jury_president": "",
-  "reviewers": "",
+  "defense_year": "2017",
+  "advisor": ["Gérard Jorland"],
+  "jury_president": null,
+  "reviewers": [],
   "committee_members": ["Romain Bertrand", "Patrice Bourdelais", "Charles Illouz", "Annick Opinel", "Patrick Zylberman", "Gérard Jorland"],
   "language": "fre",
   "confidence": 0.98
@@ -53,6 +54,7 @@ EXTRACTION_FIELDS = [
     "author",
     "degree_type",
     "discipline",
+    "volume",
     "granting_institution",
     "co_tutelle_institutions",
     "doctoral_school",
@@ -290,7 +292,8 @@ def check_ui(
         response = requests.post(
             f"{api_url.rstrip('/')}/check/{profile}", headers=headers, json=payload, timeout=180
         )
-        response.raise_for_status()
+        if not response.ok:
+            raise gr.Error(f"Erreur API {response.status_code}: {response.text[:1000]}")
         result = response.json()
     except requests.RequestException as exc:
         raise gr.Error(f"Erreur lors de l'appel API: {exc}") from exc
@@ -330,6 +333,7 @@ CSS = """
 .evidence-item ul { margin: 0; }
 @media (max-width: 800px) { .evidence-grid { grid-template-columns: 1fr; } }
 """
+
 
 with gr.Blocks(css=CSS, title="Humatheque Alma Check") as demo:
     gr.Markdown(

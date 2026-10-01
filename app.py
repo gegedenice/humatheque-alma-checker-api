@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()
 
@@ -134,10 +134,11 @@ class AlmaCheckRequest(BaseModel):
     co_tutelle_institutions: list[str] = Field(default_factory=list)
     doctoral_school: str = Field("", description="Extracted doctoral school.")
     defense_year: int | str | None = Field(None, description="Extracted defense year.")
-    advisor: str = Field("", description="Extracted advisor name.")
+    volume: str = Field("", description="Extracted volume number, if the work spans several volumes.")
+    advisor: list[str] = Field(default_factory=list, description="Extracted advisor names.")
     jury_president: str = Field("", description="Extracted jury president.")
-    reviewers: str | list[str] = Field("", description="Extracted reviewers, string or list.")
-    committee_members: str | list[str] = Field("", description="Extracted committee members, string or list.")
+    reviewers: list[str] = Field(default_factory=list, description="Extracted reviewer names.")
+    committee_members: list[str] = Field(default_factory=list, description="Extracted committee member names.")
     language: str = Field("", description="ISO 639-2 language code if available.")
     confidence: float | None = Field(None, ge=0.0, le=1.0)
 
@@ -158,6 +159,20 @@ class AlmaCheckRequest(BaseModel):
     retries: int = Field(DEFAULT_RETRIES, ge=0, le=10)
     backoff: float = Field(DEFAULT_BACKOFF, ge=0.0, le=30.0)
     include_unimarc_xml: bool = Field(False, description="Include raw record XML in candidate output.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_extraction(cls, data: Any) -> Any:
+        # VLM extractions send null for missing values; a plain string is still accepted
+        # for list fields ("A; B" or "A | B").
+        if isinstance(data, dict):
+            data = {key: value for key, value in data.items() if value is not None}
+            for key in ("co_tutelle_institutions", "advisor", "reviewers", "committee_members"):
+                if isinstance(data.get(key), str):
+                    data[key] = split_people(data[key])
+            if isinstance(data.get("volume"), int):
+                data["volume"] = str(data["volume"])
+        return data
 
 
 @dataclass
@@ -272,9 +287,7 @@ def split_people(value: str | list[str] | None) -> list[str]:
 
 
 def build_context(payload: AlmaCheckRequest) -> str:
-    people = [payload.author, payload.advisor, payload.jury_president]
-    people.extend(split_people(payload.reviewers))
-    people.extend(split_people(payload.committee_members))
+    people = [payload.author, payload.jury_president, *payload.advisor, *payload.reviewers, *payload.committee_members]
     parts: list[Any] = [
         payload.title,
         payload.subtitle,
@@ -697,7 +710,7 @@ def score_candidate(payload: AlmaCheckRequest, record: AlmaRecord) -> None:
 
     author_score = max((name_similarity(payload.author, author) for author in record.authors), default=0.0)
     people = [item["name"] for item in record.contributors]
-    advisor_score = name_similarity(payload.advisor, " ".join(people)) if payload.advisor else 0.0
+    advisor_score = max((name_similarity(advisor, person) for advisor in payload.advisor for person in people), default=0.0)
 
     academic_score = float(record.academic.get("confidence", 0.0))
 
@@ -890,6 +903,8 @@ def check_alma(payload: AlmaCheckRequest) -> dict[str, Any]:
             "granting_institution": payload.granting_institution,
             "doctoral_school": payload.doctoral_school,
             "defense_year": payload.defense_year,
+            "volume": payload.volume,
+            "advisor": payload.advisor,
             "language": payload.language,
         },
         "sru": {
@@ -939,6 +954,9 @@ async def sru_search_endpoint(
     include_unimarc_xml: bool = Query(False),
     _: None = Depends(require_api_key),
 ) -> dict[str, Any]:
+    if "alma." not in query:
+        # Alma SRU rejects bare words (diagnostic 200812): wrap them as a keyword search.
+        query = cql_clause("alma.all_for_ui", query.replace('"', " ").strip())
     result = await run_in_threadpool(search_alma, query, max_records, timeout, retries, backoff, include_unimarc_xml)
     profile = PROFILES["academic"]
     return {
@@ -997,4 +1015,5 @@ async def check_academic_endpoint(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app:app", host="0.0.0.0", port=port)
