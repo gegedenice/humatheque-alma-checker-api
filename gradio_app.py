@@ -128,6 +128,12 @@ def ppn_link(candidate: dict[str, Any]) -> str:
     return f"<a href='{esc(candidate.get('sudoc_url'))}' target='_blank'>{esc(candidate['ppn'])}</a>"
 
 
+def mms_link(candidate: dict[str, Any]) -> str:
+    if not candidate.get("alma_url"):
+        return esc(candidate.get("mms_id"))
+    return f"<a href='{esc(candidate['alma_url'])}' target='_blank'>{esc(candidate.get('mms_id'))}</a>"
+
+
 def score_table(candidate: dict[str, Any]) -> str:
     score = candidate.get("score") or {}
     rows = "".join(
@@ -176,7 +182,7 @@ def candidate_panel(title: str, candidate: dict[str, Any] | None) -> str:
       <h3>{esc(title)}</h3>
       <p><strong>Titre :</strong> {esc(candidate.get('title'))}</p>
       <p><strong>Auteurs :</strong> {esc(' | '.join(candidate.get('authors') or []))}</p>
-      <p><strong>MMS ID :</strong> {esc(candidate.get('mms_id'))}
+      <p><strong>MMS ID :</strong> {mms_link(candidate)}
          &nbsp;<strong>PPN :</strong> {ppn_link(candidate)}
          &nbsp;<strong>Annee :</strong> {esc(candidate.get('year'))}</p>
       <p><strong>Nature deduite :</strong> {esc(academic.get('kind'))}
@@ -196,7 +202,7 @@ def candidates_table(candidates: list[dict[str, Any]]) -> str:
         return '<p class="muted">Aucun candidat.</p>'
     rows = "".join(
         "<tr>"
-        f"<td>{esc(candidate.get('mms_id'))}</td>"
+        f"<td>{mms_link(candidate)}</td>"
         f"<td>{ppn_link(candidate)}</td>"
         f"<td>{esc(candidate.get('title'))}</td>"
         f"<td>{esc(' | '.join(candidate.get('authors') or []))}</td>"

@@ -682,7 +682,10 @@ def cql_clause(index: str, terms: str) -> str:
 
 
 def build_queries(payload: AlmaCheckRequest, profile: DocumentProfile) -> list[str]:
-    main_title = title_terms(" ".join([payload.title, payload.subtitle]))
+    # The subtitle gets its own term budget: capping title + subtitle together used to
+    # drop the subtitle's most distinctive words (often proper nouns at its end).
+    subtitle = title_terms(payload.subtitle, max_terms=5)
+    main_title = " ".join(dict.fromkeys(f"{title_terms(payload.title)} {subtitle}".split()))
     short_title = title_terms(payload.title, max_terms=4)
     author = author_terms(payload.author)
     context_terms = " ".join(
@@ -710,6 +713,9 @@ def build_queries(payload: AlmaCheckRequest, profile: DocumentProfile) -> list[s
         queries.append(f"{cql_clause(title_index, short_title)} and {cql_clause(creator_index, author)}")
     if main_title:
         queries.append(cql_clause(title_index, main_title))
+    if subtitle and author:
+        # Recall when the VLM split title and subtitle differently from the catalogue.
+        queries.append(f"{cql_clause(title_index, subtitle)} and {cql_clause(creator_index, author)}")
     if short_title and context_terms:
         queries.append(f"{cql_clause(title_index, short_title)} and {cql_clause(keyword_index, context_terms)}")
     if author and short_title:
@@ -820,6 +826,8 @@ def candidate_to_json(record: AlmaRecord, include_unimarc_xml: bool, profile: Do
         "ppn_source": record.ppn_source,
         "has_ppn": bool(record.ppn),
         "sudoc_url": f"https://www.sudoc.fr/{record.ppn}" if record.ppn else None,
+        # The UNIMARC view the score was computed on; Alma's marcxml view drops 328.
+        "alma_url": sru_url(f"rec.id={record.mms_id}", 1),
         "title": " : ".join(part for part in [record.title, record.subtitle] if part) or None,
         "authors": record.authors,
         "contributors": record.contributors,
