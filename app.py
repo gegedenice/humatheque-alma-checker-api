@@ -43,10 +43,9 @@ DEFAULT_MAX_RECORDS_PER_QUERY = int(os.getenv("ALMA_MAX_RECORDS_PER_QUERY", "10"
 DEFAULT_MAX_CANDIDATES = int(os.getenv("ALMA_MAX_CANDIDATES", "20"))
 DEFAULT_MATCH_THRESHOLD = float(os.getenv("ALMA_MATCH_THRESHOLD", "0.78"))
 DEFAULT_AMBIGUOUS_THRESHOLD = float(os.getenv("ALMA_AMBIGUOUS_THRESHOLD", "0.62"))
-# Pivot extraction schemas; point at a tag or commit instead of `main` to pin a version.
+# Pivot extraction schemas, served by the humatheque-schemas API as {url}/{kind}.
 EXTRACTION_SCHEMAS_URL = os.getenv(
-    "EXTRACTION_SCHEMAS_URL",
-    "https://raw.githubusercontent.com/gegedenice/humatheque-extraction-schemas/main",
+    "EXTRACTION_SCHEMAS_URL", "https://humatheque-schemas.smartbiblia.fr/schemas"
 ).rstrip("/")
 
 logger = logging.getLogger("humatheque-alma-check-api")
@@ -193,11 +192,11 @@ def fetch_extraction_schemas() -> dict[str, dict[str, Any]]:
     """Load the pivot schemas once, at startup.
 
     They only document the request bodies (validation relies on AlmaCheckRequest), so
-    an unreachable repository degrades the docs instead of preventing startup.
+    an unreachable schemas API degrades the docs instead of preventing startup.
     """
     schemas = {}
     for kind in ("thesis", "dissertation"):
-        url = f"{EXTRACTION_SCHEMAS_URL}/{kind}.schema.json"
+        url = f"{EXTRACTION_SCHEMAS_URL}/{kind}"
         try:
             with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=10) as response:
                 schemas[kind] = json.load(response)
@@ -1022,17 +1021,6 @@ async def sru_search_endpoint(
         "diagnostics": result["diagnostics"],
         "error": result["error"],
     }
-
-
-@app.get("/schemas/{kind}")
-def extraction_schema(kind: str) -> dict[str, Any]:
-    """Pivot JSON Schema of the VLM extraction for `thesis` or `dissertation`."""
-    if kind not in EXTRACTION_SCHEMAS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Schema {kind!r} unavailable. Loaded: {sorted(EXTRACTION_SCHEMAS)}. Source: {EXTRACTION_SCHEMAS_URL}.",
-        )
-    return EXTRACTION_SCHEMAS[kind]
 
 
 @app.get("/profiles")
