@@ -52,9 +52,8 @@ logger = logging.getLogger("humatheque-alma-check-api")
 
 SRW_NS = {"srw": "http://www.loc.gov/zing/srw/"}
 
-THESIS_NOTE_KEYWORDS = ("these", "theses", "thesis", "doctorat", "dissertation")
-# The dissertation pivot schema lists the HDR among dissertations, not theses.
-DISSERTATION_NOTE_KEYWORDS = ("memoire", "memoires", "master", "maitrise", "dea", "dess", "habilitation")
+THESIS_NOTE_KEYWORDS = ("these", "theses", "thesis", "doctorat", "phd")
+DISSERTATION_NOTE_KEYWORDS = ("memoire", "memoires", "master", "maitrise", "dea", "dess", "habilitation", "HDR")
 ACADEMIC_SUBJECT_KEYWORD = "theses et ecrits academiques"
 
 SCORE_WEIGHTS = {
