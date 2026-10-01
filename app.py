@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import json
+import logging
 import math
 import os
 import re
@@ -19,7 +22,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, create_model, model_validator
 
 load_dotenv()
 
@@ -40,11 +43,19 @@ DEFAULT_MAX_RECORDS_PER_QUERY = int(os.getenv("ALMA_MAX_RECORDS_PER_QUERY", "10"
 DEFAULT_MAX_CANDIDATES = int(os.getenv("ALMA_MAX_CANDIDATES", "20"))
 DEFAULT_MATCH_THRESHOLD = float(os.getenv("ALMA_MATCH_THRESHOLD", "0.78"))
 DEFAULT_AMBIGUOUS_THRESHOLD = float(os.getenv("ALMA_AMBIGUOUS_THRESHOLD", "0.62"))
+# Pivot extraction schemas; point at a tag or commit instead of `main` to pin a version.
+EXTRACTION_SCHEMAS_URL = os.getenv(
+    "EXTRACTION_SCHEMAS_URL",
+    "https://raw.githubusercontent.com/gegedenice/humatheque-extraction-schemas/main",
+).rstrip("/")
+
+logger = logging.getLogger("humatheque-alma-check-api")
 
 SRW_NS = {"srw": "http://www.loc.gov/zing/srw/"}
 
-THESIS_NOTE_KEYWORDS = ("these", "theses", "thesis", "doctorat", "dissertation", "habilitation")
-DISSERTATION_NOTE_KEYWORDS = ("memoire", "memoires", "master", "maitrise", "dea", "dess")
+THESIS_NOTE_KEYWORDS = ("these", "theses", "thesis", "doctorat", "dissertation")
+# The dissertation pivot schema lists the HDR among dissertations, not theses.
+DISSERTATION_NOTE_KEYWORDS = ("memoire", "memoires", "master", "maitrise", "dea", "dess", "habilitation")
 ACADEMIC_SUBJECT_KEYWORD = "theses et ecrits academiques"
 
 SCORE_WEIGHTS = {
@@ -89,8 +100,8 @@ PROFILES: dict[str, DocumentProfile] = {
     "dissertation": DocumentProfile(
         name="dissertation",
         description=(
-            "Master's mémoires and other dissertations: UNIMARC 328 mentions a mémoire, "
-            "master or maîtrise, or the record only carries the 608 'Thèses et écrits "
+            "Master's mémoires, other dissertations and HDR: UNIMARC 328 mentions a mémoire, "
+            "master, maîtrise or habilitation, or the record only carries the 608 'Thèses et écrits "
             "académiques' subject."
         ),
         accepted_kinds=("dissertation", "academic_subject_only"),
@@ -125,21 +136,24 @@ def require_api_key(api_key: str | None = Security(api_key_header)) -> None:
 
 
 class AlmaCheckRequest(BaseModel):
+    # Extraction fields follow the pivot schemas (EXTRACTION_SCHEMAS_URL). Types are
+    # deliberately more lenient than the schemas: nulls become defaults (see
+    # `coerce_extraction`), list fields accept "A; B" strings, degree_type is free text.
     title: str = Field(..., description="Extracted main title.")
-    subtitle: str = Field("", description="Extracted subtitle.")
-    author: str = Field("", description="Extracted author name.")
-    degree_type: str = Field("", description="Extracted degree or document type.")
-    discipline: str = Field("", description="Extracted discipline.")
-    granting_institution: str = Field("", description="Extracted granting institution.")
+    subtitle: str | None = Field("", description="Extracted subtitle.")
+    author: str | None = Field("", description="Extracted author name.")
+    degree_type: str | None = Field("", description="Extracted degree or document type.")
+    discipline: str | None = Field("", description="Extracted discipline.")
+    volume: str | None = Field("", description="Volume number as an Arabic numeral; echoed, not matched.")
+    granting_institution: str | None = Field("", description="Extracted granting institution.")
     co_tutelle_institutions: list[str] = Field(default_factory=list)
-    doctoral_school: str = Field("", description="Extracted doctoral school.")
-    defense_year: int | str | None = Field(None, description="Extracted defense year.")
-    volume: str = Field("", description="Extracted volume number, if the work spans several volumes.")
+    doctoral_school: str | None = Field("", description="Extracted doctoral school.")
+    defense_year: int | str | None = Field(None, description="Extracted defense year, yyyy.")
     advisor: list[str] = Field(default_factory=list, description="Extracted advisor names.")
-    jury_president: str = Field("", description="Extracted jury president.")
+    jury_president: str | None = Field("", description="Extracted jury president.")
     reviewers: list[str] = Field(default_factory=list, description="Extracted reviewer names.")
     committee_members: list[str] = Field(default_factory=list, description="Extracted committee member names.")
-    language: str = Field("", description="ISO 639-2 language code if available.")
+    language: str | None = Field("", description="ISO 639 three-letter language code.")
     confidence: float | None = Field(None, ge=0.0, le=1.0)
 
     profile: str = Field(
@@ -173,6 +187,45 @@ class AlmaCheckRequest(BaseModel):
             if isinstance(data.get("volume"), int):
                 data["volume"] = str(data["volume"])
         return data
+
+
+def fetch_extraction_schemas() -> dict[str, dict[str, Any]]:
+    """Load the pivot schemas once, at startup.
+
+    They only document the request bodies (validation relies on AlmaCheckRequest), so
+    an unreachable repository degrades the docs instead of preventing startup.
+    """
+    schemas = {}
+    for kind in ("thesis", "dissertation"):
+        url = f"{EXTRACTION_SCHEMAS_URL}/{kind}.schema.json"
+        try:
+            with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=10) as response:
+                schemas[kind] = json.load(response)
+        except (OSError, ValueError) as exc:
+            logger.warning("Extraction schema %s unavailable (%s): generic field docs used.", url, exc)
+    return schemas
+
+
+EXTRACTION_SCHEMAS = fetch_extraction_schemas()
+
+
+def profile_request_model(kind: str) -> type[AlmaCheckRequest]:
+    """AlmaCheckRequest documented with the field descriptions of a pivot schema."""
+    fields: dict[str, Any] = {}
+    properties = EXTRACTION_SCHEMAS.get(kind, {}).get("properties", {})
+    for name, prop in properties.items():
+        if name not in AlmaCheckRequest.model_fields:
+            continue  # a field added upstream is ignored until the API maps it
+        info = copy.copy(AlmaCheckRequest.model_fields[name])
+        info.description = prop["description"]
+        if "enum" in prop:
+            info.examples = [value for value in prop["enum"] if value]
+        fields[name] = (info.annotation, info)
+    return create_model(f"{kind.capitalize()}CheckRequest", __base__=AlmaCheckRequest, **fields)
+
+
+ThesisCheckRequest = profile_request_model("thesis")
+DissertationCheckRequest = profile_request_model("dissertation")
 
 
 @dataclass
@@ -971,6 +1024,17 @@ async def sru_search_endpoint(
     }
 
 
+@app.get("/schemas/{kind}")
+def extraction_schema(kind: str) -> dict[str, Any]:
+    """Pivot JSON Schema of the VLM extraction for `thesis` or `dissertation`."""
+    if kind not in EXTRACTION_SCHEMAS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Schema {kind!r} unavailable. Loaded: {sorted(EXTRACTION_SCHEMAS)}. Source: {EXTRACTION_SCHEMAS_URL}.",
+        )
+    return EXTRACTION_SCHEMAS[kind]
+
+
 @app.get("/profiles")
 def list_profiles() -> dict[str, Any]:
     return {
@@ -987,7 +1051,7 @@ def list_profiles() -> dict[str, Any]:
 
 @app.post("/check/thesis")
 async def check_thesis_endpoint(
-    payload: AlmaCheckRequest,
+    payload: ThesisCheckRequest,
     _: None = Depends(require_api_key),
 ) -> dict[str, Any]:
     payload.profile = "thesis"
@@ -996,7 +1060,7 @@ async def check_thesis_endpoint(
 
 @app.post("/check/dissertation")
 async def check_dissertation_endpoint(
-    payload: AlmaCheckRequest,
+    payload: DissertationCheckRequest,
     _: None = Depends(require_api_key),
 ) -> dict[str, Any]:
     payload.profile = "dissertation"
