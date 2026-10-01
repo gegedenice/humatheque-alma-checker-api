@@ -7,8 +7,8 @@ mémoire.
 
 L'API est conçue pour une chaîne de catalogage de thèses et de mémoires. Elle
 exécute plusieurs requêtes SRU orientées rappel sur le point d'accès Alma de
-l'établissement et, comme Alma SRU n'offre aucun filtre de type de document,
-elle **déduit** le caractère universitaire de chaque notice à partir des zones
+l'établissement et, comme les filtres Alma SRU par type de document peuvent être multiples,
+elle **déduit** le caractère TU de chaque notice à partir des zones
 UNIMARC `328` et `608`. Les exemplaires trouvés en `930`, `995` et `AVA` sont
 restitués avec chaque candidat, et le `PPN` Sudoc présent en `035$a` est traité
 comme une information de premier plan : il n'entre pas dans le score, mais c'est
@@ -41,9 +41,7 @@ Seuls les trois index publiés par l'explain du point d'accès sont utilisés :
 La relation `all` combine en ET les mots du terme entre guillemets, ce qui
 préserve le rappel sans dépendre de l'ordre des mots.
 
-Il n'existe **pas** d'équivalent du `tdo=y` du Sudoc : rien dans la requête ne
-restreint les résultats aux écrits académiques. La précision est obtenue après
-analyse, à partir de la notice elle-même.
+La précision est obtenue après analyse, à partir de la notice elle-même.
 
 ## Déduction du caractère universitaire
 
@@ -101,7 +99,7 @@ Chaque candidat expose `items`, `items_count`, `has_items` et
 
 ## Calcul du score
 
-`POST /check/*` exécute l'échelle de requêtes, fusionne les notices par MMS ID
+`POST /check/*` exécute la suite des requêtes, fusionne les notices par MMS ID
 Alma, analyse l'UNIMARC XML et score les candidats :
 
 ```text
@@ -115,13 +113,13 @@ final =
 ```
 
 `academic` est la confiance de la déduction ci-dessus : une correspondance
-parfaite de titre et d'auteur sur une notice sans indice universitaire ne peut
+parfaite de titre et d'auteur sur une notice sans indice de TU ne peut
 donc pas atteindre le seuil de correspondance.
 
 Chaque candidat porte aussi `score.bibliographic` : le même score sans la
-composante universitaire, renormalisé, c'est-à-dire la seule proximité à la
+composante TU, renormalisé, c'est-à-dire la seule proximité à la
 requête. C'est sur cette valeur que sont jugés les candidats hors profil, dont
-la composante universitaire vaut `0` par construction.
+la composante TU vaut `0` par construction.
 
 Les pondérations sont visibles dans la réponse sous `score_weights`.
 
@@ -131,7 +129,7 @@ Statuts :
 |---|---|
 | `academic_record_found` | un candidat du profil atteint le seuil de correspondance |
 | `ambiguous_academic_candidate` | un candidat du profil existe, mais sous le seuil |
-| `off_profile_match_only` | une correspondance bibliographique forte existe, mais pas du type universitaire attendu |
+| `off_profile_match_only` | une correspondance bibliographique forte existe, mais pas du type TU attendu |
 | `no_academic_record_found` | aucun candidat du profil suffisamment proche |
 
 ## Le PPN comme information de premier plan

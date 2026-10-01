@@ -6,7 +6,7 @@ whether that record describes a thesis or a dissertation.
 
 The API targets a thesis and mémoire cataloguing pipeline. It runs several
 recall-oriented SRU queries against the institutional Alma endpoint, and because
-Alma SRU exposes no document-type predicate, it **deduces** the academic nature
+Alma SRU document-type predicates can be multiple, it **deduces** the academic nature
 of every hit from UNIMARC `328` and `608`. Holdings found in `930`, `995` and
 `AVA` are returned with each candidate, and the Sudoc `PPN` carried in `035$a`
 is reported as first-class information: it does not influence the match score,
@@ -39,9 +39,7 @@ Only the three indexes published by the endpoint's explain response are used:
 The `all` relation ANDs the words of the quoted term, which keeps recall high
 without depending on phrase order.
 
-There is **no** equivalent of Sudoc's `tdo=y`: nothing in the query restricts
-results to academic writing. Precision is obtained after parsing, from the
-record itself.
+Precision is obtained after parsing, from the record itself.
 
 ## Academic deduction
 
